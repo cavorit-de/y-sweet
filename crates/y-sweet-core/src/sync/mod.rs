@@ -47,9 +47,15 @@ pub trait Protocol {
     /// stored one after another.
     fn start<E: Encoder>(&self, awareness: &Awareness, encoder: &mut E) -> Result<(), Error> {
         let (sv, update) = {
-            let sv = awareness.doc().transact().state_vector();
-            let update = awareness.update()?;
-            (sv, update)
+            let txn = awareness.doc().try_transact();
+            match txn {
+                Ok(txn) => {
+                    let sv = txn.state_vector();
+                    let update = awareness.update()?;
+                    (sv, update)
+                }
+                Err(e) => return Err(Error::Other(Box::new(e))),
+            }
         };
         Message::Sync(SyncMessage::SyncStep1(sv)).encode(encoder);
         Message::Awareness(update).encode(encoder);
@@ -63,8 +69,14 @@ pub trait Protocol {
         awareness: &Awareness,
         sv: StateVector,
     ) -> Result<Option<Message>, Error> {
-        let update = awareness.doc().transact().encode_state_as_update_v1(&sv);
-        Ok(Some(Message::Sync(SyncMessage::SyncStep2(update))))
+        let txn = awareness.doc().try_transact();
+        match txn {
+            Ok(txn) => {
+                let update = txn.encode_state_as_update_v1(&sv);
+                Ok(Some(Message::Sync(SyncMessage::SyncStep2(update))))
+            }
+            Err(e) => Err(Error::Other(Box::new(e))),
+        }
     }
 
     /// Handle reply for a sync-step-1 send from this replica previously. By default, just apply
@@ -74,9 +86,14 @@ pub trait Protocol {
         awareness: &mut Awareness,
         update: Update,
     ) -> Result<Option<Message>, Error> {
-        let mut txn = awareness.doc().transact_mut();
-        txn.apply_update(update);
-        Ok(None)
+        let txn = awareness.doc().try_transact_mut();
+        match txn {
+            Ok(mut txn) => {
+                txn.apply_update(update);
+                Ok(None)
+            }
+            Err(e) => Err(Error::Other(Box::new(e))),
+        }
     }
 
     /// Handle continuous update send from the client. By default just apply an update to a current

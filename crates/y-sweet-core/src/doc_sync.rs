@@ -1,4 +1,9 @@
-use crate::{doc_connection::DOC_NAME, store::Store, sync::awareness::Awareness, sync_kv::SyncKv};
+use crate::{
+    doc_connection::DOC_NAME,
+    store::Store,
+    sync::{self, awareness::Awareness},
+    sync_kv::SyncKv,
+};
 use anyhow::{anyhow, Context, Result};
 use std::sync::{Arc, RwLock};
 use yrs::{updates::decoder::Decode, Doc, ReadTxn, StateVector, Subscription, Transact, Update};
@@ -71,7 +76,10 @@ impl DocWithSyncKv {
     }
 
     pub fn apply_update(&self, update: &[u8]) -> Result<()> {
-        let awareness_guard = self.awareness.write().unwrap();
+        let awareness_guard = self
+            .awareness
+            .write()
+            .map_err(|_| sync::Error::PoisonedLock)?;
         let doc = &awareness_guard.doc;
 
         let update: Update =

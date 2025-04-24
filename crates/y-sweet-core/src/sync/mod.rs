@@ -306,6 +306,14 @@ pub enum Error {
     #[error("unsupported message tag identifier: {0}")]
     Unsupported(u8),
 
+    /// Thrown whenever a poisoned lock has been encountered.
+    #[error("poisoned lock")]
+    PoisonedLock,
+
+    /// Thrown whenever a poisoned lock has been encountered.
+    #[error("no next client id")]
+    NoNextClientId,
+
     /// Custom dynamic kind of error, usually related to a warp internal error messages.
     #[error("internal failure: {0}")]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),

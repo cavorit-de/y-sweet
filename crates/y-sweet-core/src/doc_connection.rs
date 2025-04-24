@@ -172,12 +172,12 @@ impl DocConnection {
         match msg {
             Message::Sync(msg) => match msg {
                 SyncMessage::SyncStep1(sv) => {
-                    let awareness = a.read().unwrap();
+                    let awareness = a.read().map_err(|_| sync::Error::PoisonedLock)?;
                     protocol.handle_sync_step1(&awareness, sv)
                 }
                 SyncMessage::SyncStep2(update) => {
                     if can_write {
-                        let mut awareness = a.write().unwrap();
+                        let mut awareness = a.write().map_err(|_| sync::Error::PoisonedLock)?;
                         protocol.handle_sync_step2(&mut awareness, Update::decode_v1(&update)?)
                     } else {
                         Err(sync::Error::PermissionDenied {
@@ -187,7 +187,7 @@ impl DocConnection {
                 }
                 SyncMessage::Update(update) => {
                     if can_write {
-                        let mut awareness = a.write().unwrap();
+                        let mut awareness = a.write().map_err(|_| sync::Error::PoisonedLock)?;
                         protocol.handle_update(&mut awareness, Update::decode_v1(&update)?)
                     } else {
                         Err(sync::Error::PermissionDenied {
@@ -197,21 +197,25 @@ impl DocConnection {
                 }
             },
             Message::Auth(reason) => {
-                let awareness = a.read().unwrap();
+                let awareness = a.read().map_err(|_| sync::Error::PoisonedLock)?;
                 protocol.handle_auth(&awareness, reason)
             }
             Message::AwarenessQuery => {
-                let awareness = a.read().unwrap();
+                let awareness = a.read().map_err(|_| sync::Error::PoisonedLock)?;
                 protocol.handle_awareness_query(&awareness)
             }
             Message::Awareness(update) => {
                 if update.clients.len() == 1 {
-                    let client_id = update.clients.keys().next().unwrap();
+                    let client_id = update
+                        .clients
+                        .keys()
+                        .next()
+                        .ok_or(sync::Error::NoNextClientId)?;
                     self.client_id.get_or_init(|| *client_id);
                 } else {
                     tracing::warn!("Received awareness update with more than one client");
                 }
-                let mut awareness = a.write().unwrap();
+                let mut awareness = a.write().map_err(|_| sync::Error::PoisonedLock)?;
                 protocol.handle_awareness_update(&mut awareness, update)
             }
             Message::Custom(SYNC_STATUS_MESSAGE, data) => {
@@ -219,7 +223,7 @@ impl DocConnection {
                 Ok(Some(Message::Custom(SYNC_STATUS_MESSAGE, data)))
             }
             Message::Custom(tag, data) => {
-                let mut awareness = a.write().unwrap();
+                let mut awareness = a.write().map_err(|_| sync::Error::PoisonedLock)?;
                 protocol.missing_handle(&mut awareness, tag, data)
             }
         }

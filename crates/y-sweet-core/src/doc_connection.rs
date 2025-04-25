@@ -65,6 +65,103 @@ impl DocConnection {
         Self::new_inner(awareness, authorization, Arc::new(callback))
     }
 
+    #[cfg(feature = "sync")]
+    pub fn try_new<F>(
+        awareness: Arc<RwLock<Awareness>>,
+        authorization: Authorization,
+        callback: F,
+    ) -> Result<Self, sync::Error>
+    where
+        F: Fn(&[u8]) + 'static + Send + Sync,
+    {
+        Self::try_new_inner(awareness, authorization, Arc::new(callback))
+    }
+
+    pub fn try_new_inner(
+        awareness: Arc<RwLock<Awareness>>,
+        authorization: Authorization,
+        callback: Callback,
+    ) -> Result<Self, sync::Error> {
+        let closed = Arc::new(OnceLock::new());
+
+        let (doc_subscription, awareness_subscription) = {
+            let mut awareness = awareness.write().map_err(|_| sync::Error::PoisonedLock)?;
+
+            // Initial handshake is based on this:
+            // https://github.com/y-crdt/y-sync/blob/56958e83acfd1f3c09f5dd67cf23c9c72f000707/src/sync.rs#L45-L54
+
+            {
+                // Send a server-side state vector, so that the client can send
+                // updates that happened offline.
+                let sv = awareness.doc().transact().state_vector();
+                let sync_step_1 = Message::Sync(SyncMessage::SyncStep1(sv)).encode_v1();
+                callback(&sync_step_1);
+            }
+
+            {
+                // Send the initial awareness state.
+                let update = awareness.update().map_err(|_| sync::Error::PoisonedLock)?;
+                let awareness = Message::Awareness(update).encode_v1();
+                callback(&awareness);
+            }
+
+            let doc_subscription = {
+                let doc = awareness.doc();
+                let callback = callback.clone();
+                let closed = closed.clone();
+                let observer = doc
+                    .observe_update_v1(move |_, event| {
+                        if closed.get().is_some() {
+                            return;
+                        }
+                        // https://github.com/y-crdt/y-sync/blob/56958e83acfd1f3c09f5dd67cf23c9c72f000707/src/net/broadcast.rs#L47-L52
+                        let mut encoder = EncoderV1::new();
+                        encoder.write_var(MSG_SYNC);
+                        encoder.write_var(MSG_SYNC_UPDATE);
+                        encoder.write_buf(&event.update);
+                        let msg = encoder.to_vec();
+                        callback(&msg);
+                    })
+                    .map_err(|_| sync::Error::PoisonedLock)?;
+                observer
+            };
+
+            let callback = callback.clone();
+            let closed = closed.clone();
+            let awareness_subscription = awareness.on_update(move |awareness, e| {
+                if closed.get().is_some() {
+                    return;
+                }
+
+                // https://github.com/y-crdt/y-sync/blob/56958e83acfd1f3c09f5dd67cf23c9c72f000707/src/net/broadcast.rs#L59
+                let added = e.added();
+                let updated = e.updated();
+                let removed = e.removed();
+                let mut changed = Vec::with_capacity(added.len() + updated.len() + removed.len());
+                changed.extend_from_slice(added);
+                changed.extend_from_slice(updated);
+                changed.extend_from_slice(removed);
+
+                if let Ok(u) = awareness.update_with_clients(changed) {
+                    let msg = Message::Awareness(u).encode_v1();
+                    callback(&msg);
+                }
+            });
+
+            (doc_subscription, awareness_subscription)
+        };
+
+        Ok(Self {
+            awareness,
+            doc_subscription,
+            awareness_subscription,
+            authorization,
+            callback,
+            client_id: OnceLock::new(),
+            closed,
+        })
+    }
+
     pub fn new_inner(
         awareness: Arc<RwLock<Awareness>>,
         authorization: Authorization,

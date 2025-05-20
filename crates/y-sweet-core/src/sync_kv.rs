@@ -29,7 +29,7 @@ impl SyncKv {
 
         let data = if let Some(store) = &store {
             if let Some(snapshot) = store.get(&key).await.context("Failed to get from store.")? {
-                tracing::info!(size=?snapshot.len(), "Loaded snapshot");
+                // tracing::info!(size=?snapshot.len(), "Loaded snapshot");
                 bincode::deserialize(&snapshot).context("Failed to deserialize.")?
             } else {
                 BTreeMap::new()
@@ -61,7 +61,7 @@ impl SyncKv {
                 bincode::serialize(&*data)?
             };
 
-            tracing::info!(size=?snapshot.len(), "Persisting snapshot");
+            // tracing::info!(size=?snapshot.len(), "Persisting snapshot");
             store.set(&self.key, snapshot).await?;
         }
         self.dirty.store(false, Ordering::Relaxed);
